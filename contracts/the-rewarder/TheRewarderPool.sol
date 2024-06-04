@@ -3,8 +3,8 @@ pragma solidity ^0.8.0;
 
 import "solady/src/utils/FixedPointMathLib.sol";
 import "solady/src/utils/SafeTransferLib.sol";
-import { RewardToken } from "./RewardToken.sol";
-import { AccountingToken } from "./AccountingToken.sol";
+import {RewardToken} from "./RewardToken.sol";
+import {AccountingToken} from "./AccountingToken.sol";
 
 /**
  * @title TheRewarderPool
@@ -15,7 +15,7 @@ contract TheRewarderPool {
 
     // Minimum duration of each round of rewards in seconds
     uint256 private constant REWARDS_ROUND_MIN_DURATION = 5 days;
-    
+
     uint256 public constant REWARDS = 100 ether;
 
     // Token deposited into the pool by users
@@ -28,10 +28,10 @@ contract TheRewarderPool {
     // Token in which rewards are issued
     RewardToken public immutable rewardToken;
 
-    uint128 public lastSnapshotIdForRewards;
-    uint64 public lastRecordedSnapshotTimestamp;
-    uint64 public roundNumber; // Track number of rounds
-    mapping(address => uint64) public lastRewardTimestamps;
+    uint128 public lastSnapshotIdForRewards; // @audit-info
+    uint64 public lastRecordedSnapshotTimestamp; // @audit-info last recorded time of the snapshot
+    uint64 public roundNumber; // Track number of rounds, increased every time the recordSnapShot function is called
+    mapping(address => uint64) public lastRewardTimestamps; // @audit-info
 
     error InvalidDepositAmount();
 
@@ -41,7 +41,7 @@ contract TheRewarderPool {
         accountingToken = new AccountingToken();
         rewardToken = new RewardToken();
 
-        _recordSnapshot();
+        _recordSnapshot(); // record the first snapshot when the contract is deployed
     }
 
     /**
@@ -55,7 +55,14 @@ contract TheRewarderPool {
         }
 
         accountingToken.mint(msg.sender, amount);
-        distributeRewards();
+
+        // checks if the current time is greater the than last recorder snapshot time + 5 days
+        // --> then record the new snapshot
+        // --> fetch the accounting token total supply at the lastsnapshot
+        // --> fetch the balanceOd accounting token at lastsnapshot
+        // --> then Calculate the share based on total deposits
+
+        distributeRewards(); // @audit-info distributes the reward id there are any when distributing
 
         SafeTransferLib.safeTransferFrom(
             liquidityToken,
@@ -75,12 +82,18 @@ contract TheRewarderPool {
             _recordSnapshot();
         }
 
-        uint256 totalDeposits = accountingToken.totalSupplyAt(lastSnapshotIdForRewards);
-        uint256 amountDeposited = accountingToken.balanceOfAt(msg.sender, lastSnapshotIdForRewards);
+        uint256 totalDeposits = accountingToken.totalSupplyAt(
+            lastSnapshotIdForRewards
+        );
+        uint256 amountDeposited = accountingToken.balanceOfAt(
+            msg.sender,
+            lastSnapshotIdForRewards
+        );
 
         if (amountDeposited > 0 && totalDeposits > 0) {
             rewards = amountDeposited.mulDiv(REWARDS, totalDeposits);
             if (rewards > 0 && !_hasRetrievedReward(msg.sender)) {
+                // @audit bug -> not checking the rewards reciver here.
                 rewardToken.mint(msg.sender, rewards);
                 lastRewardTimestamps[msg.sender] = uint64(block.timestamp);
             }
@@ -88,7 +101,7 @@ contract TheRewarderPool {
     }
 
     function _recordSnapshot() private {
-        lastSnapshotIdForRewards = uint128(accountingToken.snapshot());
+        lastSnapshotIdForRewards = uint128(accountingToken.snapshot()); // @audit-info snapshot counter from the accountingToken
         lastRecordedSnapshotTimestamp = uint64(block.timestamp);
         unchecked {
             ++roundNumber;
@@ -96,13 +109,15 @@ contract TheRewarderPool {
     }
 
     function _hasRetrievedReward(address account) private view returns (bool) {
-        return (
-            lastRewardTimestamps[account] >= lastRecordedSnapshotTimestamp
-                && lastRewardTimestamps[account] <= lastRecordedSnapshotTimestamp + REWARDS_ROUND_MIN_DURATION
-        );
+        return (lastRewardTimestamps[account] >=
+            lastRecordedSnapshotTimestamp &&
+            lastRewardTimestamps[account] <=
+            lastRecordedSnapshotTimestamp + REWARDS_ROUND_MIN_DURATION);
     }
 
     function isNewRewardsRound() public view returns (bool) {
-        return block.timestamp >= lastRecordedSnapshotTimestamp + REWARDS_ROUND_MIN_DURATION;
+        return
+            block.timestamp >=
+            lastRecordedSnapshotTimestamp + REWARDS_ROUND_MIN_DURATION;
     }
 }
